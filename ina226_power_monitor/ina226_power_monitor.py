@@ -28,13 +28,15 @@ class smbus_to_micropython_wrapper():
 
     # Only supports 2-byte buf sizes
     def writeto_mem(self, addr, reg, buf):
-        #print(f"Writing: {hex(buf[0])} {hex(buf[1])}")
+        #print(f"Write to INA226: reg: {hex(reg)} data: {hex(buf[0])} {hex(buf[1])}")
         self.smb_obj.write_i2c_block_data(addr, reg, [buf[0], buf[1]])
 
     def readfrom_mem_into(self, addr, reg, buf):
         value = self.smb_obj.read_word_data(addr, reg)
         buf[1] = (value >> 8) & 0xFF
         buf[0] = value & 0xFF
+        #print(f"Read from INA226: reg: {hex(reg)} data: {hex(buf[0])} {hex(buf[1])}")
+
 
 class PowerMonitor(Node):
     def __init__(self):
@@ -44,6 +46,8 @@ class PowerMonitor(Node):
         self.declare_parameter('dev_addr', 0x41)
         self.declare_parameter('max_current', 6.0)
         self.declare_parameter('shunt_value', 0.1)
+        self.declare_parameter('current_lsb', 0.0)
+        self.declare_parameter('cal_value', 0)
         self.declare_parameter('update_period_sec', 5.0)
         self.declare_parameter('topic', '/battery/status')
 
@@ -51,18 +55,26 @@ class PowerMonitor(Node):
         dev_addr = self.get_parameter('dev_addr').get_parameter_value().integer_value
         max_current = self.get_parameter('max_current').get_parameter_value().double_value
         shunt_value = self.get_parameter('shunt_value').get_parameter_value().double_value
+        current_lsb = self.get_parameter('current_lsb').get_parameter_value().double_value
+        cal_value = self.get_parameter('cal_value').get_parameter_value().integer_value
         update_period_sec = self.get_parameter('update_period_sec').get_parameter_value().double_value
         topic = self.get_parameter('topic').get_parameter_value().string_value
 
         self.get_logger().info(f'Using i2c bus: {i2c_bus}, dev_addr: {hex(dev_addr)}, ' \
                                f'max_current: {max_current}, shut_value: {shunt_value}, ' \
+                               f'current_lsb: {current_lsb}, cal_value: {cal_value}, ' \
                                f'update_period_sec: {update_period_sec}, topic: {topic}')
 
         i2c = smbus.SMBus(i2c_bus)
 
         self.smbus_wrapper = smbus_to_micropython_wrapper(i2c)
         self.ina226 = INA226(self.smbus_wrapper, addr=dev_addr)
-        self.ina226.calibrate(r_shunt_ohms=shunt_value, max_expected_amps=max_current)
+
+        if current_lsb == 0.0:
+            current_lsb = None
+        if cal_value == 0:
+            cal_value = None
+        self.ina226.calibrate(r_shunt_ohms=shunt_value, max_expected_amps=max_current, current_lsb_a=current_lsb, cal_value=cal_value)
 
         self.pub = self.create_publisher(BatteryState, topic, 10)
         self.timer = self.create_timer(update_period_sec, self.status_callback)
