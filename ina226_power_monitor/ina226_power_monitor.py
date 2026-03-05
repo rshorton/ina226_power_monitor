@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
@@ -42,7 +44,7 @@ class PowerMonitor(Node):
     def __init__(self):
         super().__init__('ina226_power_monitor')
 
-        self.declare_parameter('i2c_bus', 8)
+        self.declare_parameter('i2c_bus', int(os.getenv("ROBOT_I2C_BUS", 8)))
         self.declare_parameter('dev_addr', 0x41)
         self.declare_parameter('max_current', 6.0)
         self.declare_parameter('shunt_value', 0.1)
