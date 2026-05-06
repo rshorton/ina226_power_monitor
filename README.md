@@ -12,4 +12,6 @@ The voltage and current are read using the INA226 and published to the specified
    shunt_value - Value of shunt resistor on the INA226
    update_period_sec - Delay between updates (default: 5 sec)
    topic - Topic to publish BatteryState sensor_msgs.msg (default: /battery/status)
+   charge_voltage_thresholds - Voltage thresholds for mapping voltage to percent charge
+   ext_power_voltage_thresh - External voltage threshold.  Elsabot specific.  If voltage less than this, assume plugged in
 

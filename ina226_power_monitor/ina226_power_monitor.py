@@ -52,6 +52,14 @@ class PowerMonitor(Node):
         self.declare_parameter('cal_value', 0)
         self.declare_parameter('update_period_sec', 5.0)
         self.declare_parameter('topic', '/battery/status')
+        # voltage thresholds for % charge
+        # For 3 values, v > val[0] => 100% to 75%
+        #               v > val[1] => 75% to 50%
+        #               v > val[1] => 50% to 25%
+        #               else < 25%
+        self.declare_parameter('charge_voltage_thresholds', [19.0, 18.0, 17.0])
+        # If voltage less than this value, then assume on wall power (specific to elsabot)
+        self.declare_parameter('ext_power_voltage_thresh', 15.1)
 
         i2c_bus = self.get_parameter('i2c_bus').get_parameter_value().integer_value
         dev_addr = self.get_parameter('dev_addr').get_parameter_value().integer_value
@@ -61,6 +69,8 @@ class PowerMonitor(Node):
         cal_value = self.get_parameter('cal_value').get_parameter_value().integer_value
         update_period_sec = self.get_parameter('update_period_sec').get_parameter_value().double_value
         topic = self.get_parameter('topic').get_parameter_value().string_value
+        self.charge_voltage_thresholds = self.get_parameter('charge_voltage_thresholds').get_parameter_value().double_array_value
+        self.ext_power_voltage_thresh = self.get_parameter('ext_power_voltage_thresh').get_parameter_value().double_value
 
         self.get_logger().info(f'Using i2c bus: {i2c_bus}, dev_addr: {hex(dev_addr)}, ' \
                                f'max_current: {max_current}, shut_value: {shunt_value}, ' \
@@ -82,7 +92,6 @@ class PowerMonitor(Node):
         self.timer = self.create_timer(update_period_sec, self.status_callback)
 
     def status_callback(self):
-
         voltage = self.ina226.bus_voltage
         current = self.ina226.current
         self.get_logger().debug(f'Voltage: {voltage} V, Current: {current} A')
@@ -90,7 +99,23 @@ class PowerMonitor(Node):
         msg = BatteryState()
         msg.voltage = voltage
         msg.current = current
+        msg.percentage = self.voltage_to_charge_percent(voltage)
+
         self.pub.publish(msg) 
+
+    def voltage_to_charge_percent(self, voltage):
+        range_idx = 0
+
+        # ext_power_voltage_thresh assumes the external (wall power) is always
+        # lower than lowest battery voltage
+        if voltage > self.ext_power_voltage_thresh:
+            for idx, value in enumerate(self.charge_voltage_thresholds):
+                if voltage > value:
+                    range_idx = idx
+                    break
+
+        num_bins = len(self.charge_voltage_thresholds) + 1
+        return (num_bins - range_idx)/num_bins
 
 def main(args=None):
     rclpy.init(args=args)
