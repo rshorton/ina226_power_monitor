@@ -39,7 +39,6 @@ class smbus_to_micropython_wrapper():
         buf[0] = value & 0xFF
         #print(f"Read from INA226: reg: {hex(reg)} data: {hex(buf[0])} {hex(buf[1])}")
 
-
 class PowerMonitor(Node):
     def __init__(self):
         super().__init__('ina226_power_monitor')
@@ -57,7 +56,7 @@ class PowerMonitor(Node):
         #               v > val[1] => 75% to 50%
         #               v > val[1] => 50% to 25%
         #               else < 25%
-        self.declare_parameter('charge_voltage_thresholds', [19.0, 18.0, 17.0])
+        self.declare_parameter('charge_voltage_thresholds', [21.0, 19.0, 18.0, 17.0, 16.0])
         # If voltage less than this value, then assume on wall power (specific to elsabot)
         self.declare_parameter('ext_power_voltage_thresh', 15.1)
 
@@ -75,7 +74,9 @@ class PowerMonitor(Node):
         self.get_logger().info(f'Using i2c bus: {i2c_bus}, dev_addr: {hex(dev_addr)}, ' \
                                f'max_current: {max_current}, shut_value: {shunt_value}, ' \
                                f'current_lsb: {current_lsb}, cal_value: {cal_value}, ' \
-                               f'update_period_sec: {update_period_sec}, topic: {topic}')
+                               f'update_period_sec: {update_period_sec}, topic: {topic}, ' \
+                               f'charge_voltage_thresholds: {self.charge_voltage_thresholds} ' \
+                               f'ext_power_voltage_thresh: {self.ext_power_voltage_thresh}')
 
         i2c = smbus.SMBus(i2c_bus)
 
@@ -91,6 +92,8 @@ class PowerMonitor(Node):
         self.pub = self.create_publisher(BatteryState, topic, 10)
         self.timer = self.create_timer(update_period_sec, self.status_callback)
 
+        #self.test_charge_calc()
+
     def status_callback(self):
         voltage = self.ina226.bus_voltage
         current = self.ina226.current
@@ -104,18 +107,41 @@ class PowerMonitor(Node):
         self.pub.publish(msg) 
 
     def voltage_to_charge_percent(self, voltage):
-        range_idx = 0
-
         # ext_power_voltage_thresh assumes the external (wall power) is always
         # lower than lowest battery voltage
-        if voltage > self.ext_power_voltage_thresh:
-            for idx, value in enumerate(self.charge_voltage_thresholds):
-                if voltage > value:
-                    range_idx = idx
-                    break
+        if voltage < self.ext_power_voltage_thresh:
+            # On external power
+            self.get_logger().info(f'voltage: {voltage:.2f} (ext), precent: 1.0')
+            return 1.0
 
-        num_bins = len(self.charge_voltage_thresholds) + 1
-        return (num_bins - range_idx)/num_bins
+        num_thresh = len(self.charge_voltage_thresholds)
+
+        if voltage > self.charge_voltage_thresholds[0]:
+            voltage = self.charge_voltage_thresholds[0]
+        elif voltage < self.charge_voltage_thresholds[num_thresh - 1]:
+            voltage = self.charge_voltage_thresholds[num_thresh - 1]
+
+        bin_incr_percent = 1.0/(num_thresh - 1)
+
+        percent = 1.0
+        prev_thresh = self.charge_voltage_thresholds[0]
+        for idx, thresh in enumerate(self.charge_voltage_thresholds):
+            if voltage >= thresh:
+                percent = 1.0 - idx*bin_incr_percent
+                if prev_thresh != thresh:
+                    percent += (voltage - thresh)/(prev_thresh - thresh)*bin_incr_percent
+                break
+            prev_thresh = thresh
+
+        self.get_logger().info(f'voltage: {voltage:.2f}, precent charge: {percent:.2f} ')
+        return percent
+
+    def test_charge_calc(self):
+        print('Test charge calc:')
+
+        for v in range(220, 140, -2):
+            voltage = v/10.0
+            percent = self.voltage_to_charge_percent(voltage)
 
 def main(args=None):
     rclpy.init(args=args)
